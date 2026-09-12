@@ -32,16 +32,24 @@ NOTES = (
 )
 
 
-def gh(args, **kw):
-    return subprocess.run([GH, *args], capture_output=True, text=True, **kw)
+def gh(args, retries=1, **kw):
+    """Run gh. Read-only calls are retried: api.github.com resets connections
+    intermittently from here, and a lost `release view` must not be read as a
+    failed release."""
+    for attempt in range(retries):
+        r = subprocess.run([GH, *args], capture_output=True, text=True, **kw)
+        if r.returncode == 0 or attempt == retries - 1:
+            return r
+        time.sleep(5 * (attempt + 1))
+    return r
 
 
 def release_exists(tag):
-    return gh(["release", "view", tag, "--repo", REPO]).returncode == 0
+    return gh(["release", "view", tag, "--repo", REPO], retries=4).returncode == 0
 
 
 def existing_assets(tag):
-    r = gh(["release", "view", tag, "--repo", REPO, "--json", "assets"])
+    r = gh(["release", "view", tag, "--repo", REPO, "--json", "assets"], retries=4)
     if r.returncode != 0:
         return {}
     return {a["name"]: a["size"] for a in json.loads(r.stdout)["assets"]}
@@ -99,7 +107,7 @@ def main():
             f"({time.time() - t0:.0f}s)")
 
     # Verify: every container present, with the right size.
-    r = gh(["release", "view", tag, "--repo", REPO, "--json", "assets"])
+    r = gh(["release", "view", tag, "--repo", REPO, "--json", "assets"], retries=6)
     if r.returncode != 0:
         raise SystemExit(f"{rid}: release view failed: {r.stderr}")
     assets = {a["name"]: a["size"] for a in json.loads(r.stdout)["assets"]}

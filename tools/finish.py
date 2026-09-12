@@ -26,8 +26,10 @@ def run(script, *args):
 
 def main():
     rid = sys.argv[1]
+    # The first verify only deletes unplayable files; absences are expected here
+    # and repair.py is what closes them, so its exit code is not fatal.
+    run("verify.py", rid, "8")
     steps = [
-        ("verify.py", (rid, "8")),
         ("repair.py", (rid, "3", "--fallback")),
         ("verify.py", (rid, "8")),
         ("pack.py", (rid,)),

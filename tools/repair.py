@@ -133,6 +133,11 @@ def main():
 
     todo = missing_list(rid)
     log(f"repair {rid}: {len(todo)} absent: {todo}")
+    if len(todo) > 50:
+        # A long list is usually a burst of transient failures from a fetch that
+        # was pushing the CDN hard, not persistent 502s, so retry the CDN twice
+        # with two attempts per file rather than grinding through many rounds.
+        rounds = min(rounds, 2)
     for r in range(rounds):
         if not todo:
             break
@@ -140,7 +145,7 @@ def main():
         for n in todo:
             try:
                 fetch(f"https://cdn.islamic.network/quran/audio/{folder}/{rid}/{n}.mp3",
-                      os.path.join(d, f"{n}.mp3"), attempts=1)
+                      os.path.join(d, f"{n}.mp3"), attempts=2)
                 got.append(n)
             except Exception:  # noqa: BLE001
                 pass
