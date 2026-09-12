@@ -2,8 +2,11 @@
 
     python3 manifest.py <output path> [<output path> ...]
 
-Only reciters whose 114 containers exist and whose surahs.json is complete are
-included; a reciter that failed verification is omitted (and named on stderr).
+Only reciters that are actually published are included: their 114 containers
+must exist, surahs.json must be complete, and `state/<id>.done` must be present,
+which publish.py writes only after `gh release view` has confirmed all 114 assets
+with the right byte sizes.  A reciter that failed anywhere is omitted, so the
+manifest never points at a URL that would 404.
 Asset URL = base + release + "/" + "<id>-<nnn>.taqa".
 """
 
@@ -12,14 +15,15 @@ import json
 import os
 import sys
 
-from common import BASE, RECITERS, STYLE, log, packdir
+from common import BASE, RECITERS, STYLE, WORK, log, packdir
 
 
 def build():
     reciters, dropped = [], []
     for rid, _folder, kbps, gap, hue, name_en, name_ar in RECITERS:
         p = os.path.join(packdir(rid), "surahs.json")
-        if not os.path.exists(p):
+        published = os.path.exists(os.path.join(WORK, "state", f"{rid}.done"))
+        if not os.path.exists(p) or not published:
             dropped.append(rid)
             continue
         meta = json.load(open(p))

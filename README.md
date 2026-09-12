@@ -159,23 +159,40 @@ repository.
 ## The pipeline
 
 `tools/`, Python 3 with `ffmpeg`/`ffprobe` and `gh`. The same scripts live in the app
-repository at `tools/quran-audio/`. Run per reciter:
+repository at `tools/quran-audio/`. Per reciter:
 
 ```sh
-python3 tools/fetch.py  ar.alafasy 8      # 6,236 files, 8 workers, resumable, retries
-python3 tools/verify.py ar.alafasy        # ffprobe every file; delete and re-fetch bad ones
-python3 tools/repair.py ar.alafasy --fallback   # persistent 502s, everyayah fallback
-python3 tools/pack.py   ar.alafasy        # 114 .taqa containers + SHA-256 + preview clip
-python3 tools/publish.py ar.alafasy       # gh release create + upload + verify 114 assets
-python3 tools/manifest.py manifest.json   # rebuild the manifest from what packed cleanly
+python3 tools/fetch.py  ar.alafasy 8            # 6,236 files, 8 workers, resumable
+python3 tools/verify.py ar.alafasy              # ffprobe every file; delete and re-fetch bad ones
+python3 tools/repair.py ar.alafasy 3 --fallback # persistent 502s, everyayah fallback
+python3 tools/pack.py   ar.alafasy              # 114 .taqa containers + SHA-256 + preview clip
+python3 tools/check_container.py ar.alafasy     # read the containers back and compare bytes
+python3 tools/check_previews.py ar.alafasy      # preview parses and is the right length
+python3 tools/publish.py ar.alafasy             # release create + upload + verify 114 assets
+python3 tools/manifest.py manifest.json         # rebuild from what is actually published
 ```
+
+or, for the whole run without supervision:
+
+```sh
+python3 tools/watch.py     # finish.py each reciter as its download completes, one at a time
+python3 tools/status.py    # where everything is right now
+```
+
+`finish.py` chains verify → repair → verify → pack → checks → publish for one reciter and
+then calls `finalize.py`, which rewrites `manifest.json`, copies the preview clips into the
+app, and commits the manifest here. So the repository is consistent after every reciter
+rather than only at the end.
 
 Guarantees the pipeline enforces:
 
 * every ayah is fetched, and re-fetched until ffprobe parses it, finds an audio stream and
   reports a duration over 0.3 s;
-* a reciter with a hole is **not shipped** — `manifest.py` omits any reciter whose 114
-  containers are not all present;
-* the MP3 bytes inside a container are identical to the bytes served by the CDN;
+* a reciter with a hole is **not shipped** — `manifest.py` includes a reciter only when its
+  release has been verified asset by asset;
+* the MP3 bytes inside a container are identical to the bytes served by the CDN, checked by
+  re-reading the packed container and comparing every slice;
 * after upload, `gh release view --json assets` is compared against the packed sizes, so a
-  truncated or missing asset fails loudly.
+  truncated or missing asset fails loudly;
+* an asset already uploaded with the right size is never uploaded twice, so an interrupted
+  run resumes cheaply.

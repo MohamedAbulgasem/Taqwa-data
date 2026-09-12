@@ -4,7 +4,9 @@
 
 Uploads in batches, retries a failed batch file by file, then verifies with
 `gh release view --json assets` that all 114 assets are present with exactly the
-byte sizes on disk.  Re-runnable: `--clobber` makes a partial upload resumable.
+byte sizes on disk.  Resumable and cheap to re-run: an asset already on the
+release with the right size is not uploaded again, which matters because the
+uplink here is the slowest part of the whole pipeline.
 """
 
 import json
@@ -13,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from common import REPO, log, packdir, reciter
+from common import REPO, WORK, log, packdir, reciter
 
 GH = "/opt/homebrew/bin/gh"
 
@@ -38,6 +40,13 @@ def release_exists(tag):
     return gh(["release", "view", tag, "--repo", REPO]).returncode == 0
 
 
+def existing_assets(tag):
+    r = gh(["release", "view", tag, "--repo", REPO, "--json", "assets"])
+    if r.returncode != 0:
+        return {}
+    return {a["name"]: a["size"] for a in json.loads(r.stdout)["assets"]}
+
+
 def main():
     rid = sys.argv[1]
     batch = int(sys.argv[2]) if len(sys.argv) > 2 else 12
@@ -60,6 +69,14 @@ def main():
             raise SystemExit(f"{rid}: release create failed: {r.stderr}")
         log(f"publish {rid}: created release {tag}")
 
+    have = existing_assets(tag)
+    todo = [f for f, s in zip(files, meta["surahs"])
+            if have.get(os.path.basename(f)) != s["bytes"]]
+    if len(todo) != len(files):
+        log(f"publish {rid}: {len(files) - len(todo)} of 114 already uploaded, "
+            f"{len(todo)} to go")
+    files = todo
+
     for i in range(0, len(files), batch):
         chunk = files[i:i + batch]
         for attempt in range(4):
@@ -78,7 +95,7 @@ def main():
                     time.sleep(5 * (attempt + 1))
                 else:
                     raise SystemExit(f"{rid}: giving up on {f}: {r.stderr}")
-        log(f"  upload {rid} {min(i + batch, len(files))}/114 "
+        log(f"  upload {rid} {min(i + batch, len(files))}/{len(files)} of this run "
             f"({time.time() - t0:.0f}s)")
 
     # Verify: every container present, with the right size.
@@ -96,6 +113,9 @@ def main():
     if problems:
         log(f"publish {rid}: VERIFY FAILED: {problems}")
         return 1
+    os.makedirs(os.path.join(WORK, "state"), exist_ok=True)
+    with open(os.path.join(WORK, "state", f"{rid}.done"), "w") as f:
+        f.write(f"{len(assets)} assets, {meta['totalBytes']} bytes\n")
     log(f"publish {rid}: verified {len(assets)} assets, "
         f"{meta['totalBytes']:,} bytes, {time.time() - t0:.0f}s")
     return 0
